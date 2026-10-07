@@ -1,0 +1,57 @@
+# Compose for the archive index migration rehearsal.
+#
+#   HOST_PORT=9090 docker compose up --build
+#
+# web     – the station UI + real API on a configurable host port.
+# verify  – one-shot: code tests (incl. real hard-crash/reboot subprocesses)
+#           + HTTP smoke against the running web service. Exits with the
+#           test result code.
+#
+#   docker compose build
+#   docker compose up --build verify     # build image, run tests + smoke
+#   docker compose up web                # run the station only
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: archive-station:latest
+    environment:
+      HOST: 0.0.0.0
+      PORT: "8080"
+      DB_PATH: /data/archive.db
+      ARCHIVE_STEP_DELAY: "0.25"
+    ports:
+      # Configurable host port, defaults to 8080.
+      - "${HOST_PORT:-8080}:8080"
+    volumes:
+      - archive-data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import json,urllib.request,sys; r=urllib.request.urlopen('http://127.0.0.1:8080/healthz',timeout=2); sys.exit(0 if json.load(r)['status']=='ok' else 1)"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 2s
+    # A crash-point drill hard-exits the process; the supervisor reopening
+    # the service is exactly the reboot the design must survive. Crash
+    # points are one-shot (durable), so this never becomes a restart loop.
+    restart: unless-stopped
+
+  verify:
+    image: archive-station:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      web:
+        condition: service_healthy
+    environment:
+      BASE_URL: http://web:8080
+      ARCHIVE_STEP_DELAY: "0.05"
+    command: ["sh", "verify.sh"]
+    restart: "no"
+
+volumes:
+  archive-data:

@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>遥感档案站 · 索引迁移一致性演练场</title>
+<link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="sat">🛰️</span>
+    <div>
+      <h1>遥感档案站</h1>
+      <p>观测记录索引迁移 · 快照 / 增量 / 原子切换一致性演练</p>
+    </div>
+  </div>
+  <div id="health" class="health checking">
+    <span class="dot"></span><span id="health-text">探测中…</span>
+  </div>
+</header>
+
+<main class="layout">
+  <!-- ============== 左：创建演练 ============== -->
+  <section class="card" id="create-card">
+    <h2>1 · 创建演练</h2>
+    <p class="hint">提交即冻结演练定义（不可修改）。初始记录构成复制边界处的快照；旧采集端更新按批次在迁移期间持续写入。</p>
+
+    <label>演练名称
+      <input id="d-name" value="晨昏轨道观测批次演练" maxlength="80">
+    </label>
+
+    <div class="editor-head">
+      <strong>初始记录（快照内容）</strong>
+      <button type="button" class="btn mini" onclick="addRecord()">＋ 记录</button>
+    </div>
+    <div id="records"></div>
+
+    <div class="editor-head">
+      <strong>旧端更新（按复制批次触发）</strong>
+      <button type="button" class="btn mini" onclick="addUpdate()">＋ 更新</button>
+    </div>
+    <div id="updates"></div>
+
+    <label>可选中断点（硬中断，落盘后立即退出进程）
+      <select id="d-crash">
+        <option value="">不注入中断</option>
+        <option value="after_drill_submit">复制页提交后</option>
+        <option value="after_freeze">冻结复制边界后</option>
+        <option value="after_increment">增量落盘后</option>
+        <option value="after_snapshot">快照复制后</option>
+        <option value="after_project">增量投影后</option>
+        <option value="after_switch_intent">切换意图写入后</option>
+        <option value="after_switch">原子切换后</option>
+      </select>
+    </label>
+
+    <button class="btn primary" id="create-btn" onclick="createDrill()">提交演练（真实 API）</button>
+    <div id="create-msg" class="msg"></div>
+  </section>
+
+  <!-- ============== 中：迁移控制 + 结论 ============== -->
+  <section class="card" id="control-card">
+    <h2>2 · 迁移与切换</h2>
+    <div class="row">
+      <label class="grow">演练
+        <select id="drill-select" onchange="selectDrill()"></select>
+      </label>
+      <button class="btn mini" onclick="loadDrills()">刷新列表</button>
+    </div>
+    <div class="row">
+      <label class="grow">迁移标识 migration_id
+        <input id="migration-id" placeholder="留空自动生成；重传相同标识不得重放">
+      </label>
+      <button class="btn mini" onclick="genMid()">生成</button>
+    </div>
+    <div class="row wrap">
+      <button class="btn primary" onclick="startMigration()">冻结边界并启动迁移</button>
+      <button class="btn" onclick="resumeWorker()">驱动流水线</button>
+      <button class="btn danger" onclick="manualWrite()">模拟旧端随机写</button>
+    </div>
+
+    <div id="verdict" class="verdict hidden"></div>
+
+    <h3>快照水位 / 增量序号 / 指针</h3>
+    <div id="gauges" class="gauges">
+      <div class="gauge"><span>复制边界</span><b id="g-frozen">未冻结</b></div>
+      <div class="gauge"><span>快照水位</span><b id="g-snapshot">—</b></div>
+      <div class="gauge"><span>已落盘增量</span><b id="g-maxseq">0</b></div>
+      <div class="gauge"><span>已投影序号</span><b id="g-applied">0</b></div>
+      <div class="gauge"><span>切换意图</span><b id="g-intent">未写入</b></div>
+      <div class="gauge"><span>读取指针</span><b id="g-pointer">source</b></div>
+    </div>
+
+    <h3>事件时间线</h3>
+    <div id="events" class="events"></div>
+  </section>
+
+  <!-- ============== 右：双表投影 + 增量 ============== -->
+  <section class="card wide" id="projection-card">
+    <h2>3 · 实时投影</h2>
+    <div class="tables">
+      <div>
+        <h3 class="src">源表 source（旧采集端持续写入）</h3>
+        <table id="source-table"><thead>
+          <tr><th>rid</th><th>payload</th><th>批次</th></tr>
+        </thead><tbody></tbody></table>
+      </div>
+      <div>
+        <h3 class="tgt">目标表 target（新索引）</h3>
+        <table id="target-table"><thead>
+          <tr><th>rid</th><th>payload</th><th>更新序号</th></tr>
+        </thead><tbody></tbody></table>
+      </div>
+    </div>
+    <h3>有序增量日志（边界后持久化，恰好一次投影）</h3>
+    <table id="inc-table"><thead>
+      <tr><th>#</th><th>op</th><th>rid</th><th>批次</th><th>payload</th><th>投影</th></tr>
+    </thead><tbody></tbody></table>
+  </section>
+</main>
+
+<footer>
+  <span>服务通过真实 HTTP API 操作 · SQLite 持久化状态 · 中断后重开服务自动收敛</span>
+</footer>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
