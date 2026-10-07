@@ -1,0 +1,51 @@
+name: rs-migration
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: rs-migration:latest
+    # configurable host port: HOST_PORT=9090 docker compose up -d
+    ports:
+      - "${HOST_PORT:-8080}:8080"
+    environment:
+      DATA_DIR: /data
+      PORT: "8080"
+      WORKER_INTERVAL: "${WORKER_INTERVAL:-0.2}"
+    volumes:
+      - migration-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=2).status==200 else 1)"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+      start_period: 2s
+
+  verify:
+    # Building this service builds the application image (镜像构建); the
+    # container then runs the migration-consistency code tests and an HTTP
+    # smoke against the live app service, exiting non-zero on any failure.
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: rs-migration:latest
+    depends_on:
+      app:
+        condition: service_healthy
+    environment:
+      APP_BASE: "http://app:8080"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        echo "== [verify] migration consistency unit + crash-recovery tests =="
+        python -W ignore -m unittest discover -s tests -v
+        echo "== [verify] HTTP smoke against running app =="
+        python scripts/http_smoke.py "$${APP_BASE:-http://app:8080}"
+        echo "== [verify] ALL CHECKS PASSED =="
+    restart: "no"
+
+volumes:
+  migration-data:

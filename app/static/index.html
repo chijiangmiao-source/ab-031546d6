@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>遥感档案迁移一致性演练台</title>
+<style>
+:root{--bg:#0e1420;--panel:#16202e;--line:#26334a;--txt:#dbe4f0;--mut:#8195ad;
+--ok:#35d07f;--warn:#f5b14c;--err:#f2616f;--acc:#5aa9ff;--tgt:#a78bfa}
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.5 "Segoe UI",system-ui,sans-serif;background:var(--bg);color:var(--txt)}
+header{padding:14px 22px;border-bottom:1px solid var(--line);display:flex;gap:16px;align-items:center;flex-wrap:wrap}
+h1{font-size:17px;margin:0}
+.pill{font-size:12px;padding:3px 10px;border-radius:999px;border:1px solid var(--line);color:var(--mut)}
+.pill.ok{color:var(--ok);border-color:#1f5136}
+.pill.bad{color:var(--err);border-color:#5a2430}
+.layout{display:grid;grid-template-columns:380px 1fr;gap:16px;padding:16px 22px}
+@media(max-width:980px){.layout{grid-template-columns:1fr}}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:14px}
+.card h2{font-size:13px;margin:0 0 10px;color:var(--acc);letter-spacing:.5px;text-transform:uppercase}
+label{display:block;font-size:12px;color:var(--mut);margin:8px 0 3px}
+input,select{width:100%;padding:7px 9px;background:#0d1524;border:1px solid var(--line);border-radius:6px;color:var(--txt);font-size:13px}
+button{cursor:pointer;border:0;border-radius:7px;padding:8px 14px;font-size:13px;font-weight:600}
+button.primary{background:var(--acc);color:#06121f;width:100%;margin-top:12px}
+button.ghost{background:#22304a;color:var(--txt);margin-right:6px}
+button:disabled{opacity:.45;cursor:not-allowed}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.batchline{display:flex;gap:8px;align-items:center;margin-top:6px}
+.batchline input{margin:0}
+.x{background:none;color:var(--err);font-size:16px;padding:2px 6px}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th,td{text-align:left;padding:4px 8px;border-bottom:1px solid var(--line)}
+th{color:var(--mut);font-weight:600}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media(max-width:760px){.two{grid-template-columns:1fr}}
+.tag{display:inline-block;padding:1px 8px;border-radius:5px;font-size:11px;font-weight:700}
+.tag.src{background:#23314a;color:#9ec5ff}
+.tag.tgt{background:#2c2347;color:#c9b8ff}
+.state{font-weight:700}
+.s-INTENT{color:var(--mut)}.s-FROZEN,.s-COPYING{color:var(--acc)}
+.s-CATCHING_UP{color:var(--warn)}.s-SWITCH_PENDING{color:#ffd479}.s-SWITCHED{color:var(--ok)}
+.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:10px}
+.metric{background:#0d1524;border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+.metric .k{font-size:11px;color:var(--mut)}.metric .v{font-size:17px;font-weight:700}
+.progress{height:8px;background:#0d1524;border-radius:5px;overflow:hidden;margin:6px 0}
+.progress > i{display:block;height:100%;background:linear-gradient(90deg,var(--acc),var(--tgt))}
+.verdict{padding:10px 12px;border-radius:8px;margin-top:10px;font-size:13px}
+.verdict.ok{background:#12352233;border:1px solid #1f5136;color:var(--ok)}
+.verdict.no{background:#3c162033;border:1px solid #5a2430;color:var(--err)}
+#events{max-height:230px;overflow:auto;font-family:ui-monospace,Menlo,monospace;font-size:12px}
+.ev{padding:2px 0;color:var(--mut)}
+.ev b{color:var(--txt);font-weight:600}
+#drills a{color:var(--acc);cursor:pointer;margin-right:10px;font-size:12px}
+.muted{color:var(--mut);font-size:12px}
+.err{color:var(--err);font-size:12px;margin-top:8px;white-space:pre-wrap}
+</style>
+</head>
+<body>
+<header>
+  <h1>🛰️ 遥感档案迁移一致性演练台</h1>
+  <span class="pill" id="health">health: …</span>
+  <span class="pill" id="started"></span>
+  <span class="muted">旧采集端 → 新索引：冻结边界 · 有序增量 · 恰好一次投影 · 原子切换 · 崩溃收敛</span>
+</header>
+
+<div class="layout">
+  <div>
+    <div class="card">
+      <h2>① 创建演练</h2>
+      <label>演练名称</label>
+      <input id="f-name" value="台风观测批次演练">
+      <div class="row2">
+        <div><label>初始记录数</label><input id="f-init" type="number" value="20" min="1"></div>
+        <div><label>快照每页行数</label><input id="f-page" type="number" value="4" min="1"></div>
+      </div>
+      <label>复制期间旧端更新批次（每批写入数 / 在复制完第几页后触发，留空=追增量阶段）</label>
+      <div id="f-batches"></div>
+      <button class="ghost" type="button" id="add-batch" style="margin-top:8px">＋ 添加批次</button>
+      <label style="margin-top:10px">中断点（真实杀进程，容器自动重启后须收敛）</label>
+      <select id="f-crash">
+        <option value="">无中断</option>
+        <option value="after_submit">复制页提交后（意图已落盘）</option>
+        <option value="after_increment_persist">增量落盘后</option>
+        <option value="after_switch_intent">切换意图写入后</option>
+      </select>
+      <label>迁移标识 migration_id（重传幂等键）</label>
+      <input id="f-mid" value="">
+      <button class="primary" id="create">创建演练（含初始记录）</button>
+      <div class="err" id="create-err"></div>
+    </div>
+    <div class="card">
+      <h2>历史演练</h2>
+      <div id="drills" class="muted">暂无</div>
+    </div>
+  </div>
+
+  <div>
+    <div class="card" id="panel" style="display:none">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+        <h2 style="margin:0">② 迁移状态 · <span id="d-name"></span></h2>
+        <div>
+          <button class="ghost" id="btn-migrate">▶ 启动迁移</button>
+          <button class="ghost" id="btn-fire">🔥 手动触发下一批旧端更新</button>
+          <button class="ghost" id="btn-refresh">刷新</button>
+        </div>
+      </div>
+      <p class="muted" id="d-mid"></p>
+      <div class="metrics">
+        <div class="metric"><div class="k">状态机</div><div class="v state" id="m-state">—</div></div>
+        <div class="metric"><div class="k">快照水位</div><div class="v" id="m-wm">—</div></div>
+        <div class="metric"><div class="k">增量 已落盘/已投影</div><div class="v" id="m-inc">—</div></div>
+        <div class="metric"><div class="k">读取指针</div><div class="v" id="m-ptr">—</div></div>
+      </div>
+      <div class="progress"><i id="m-prog" style="width:0%"></i></div>
+      <div class="muted" id="m-pages"></div>
+      <div class="verdict" id="verdict" style="display:none"></div>
+      <div class="err" id="op-err"></div>
+    </div>
+
+    <div class="two">
+      <div class="card">
+        <h2><span class="tag src">SOURCE</span> 旧表投影（source_record）</h2>
+        <table id="t-src"><thead><tr><th>rid</th><th>payload</th><th>ver</th><th>seq</th></tr></thead><tbody></tbody></table>
+        <div class="muted" id="src-count"></div>
+      </div>
+      <div class="card">
+        <h2><span class="tag tgt">TARGET</span> 新索引投影（target_record）</h2>
+        <table id="t-tgt"><thead><tr><th>rid</th><th>payload</th><th>ver</th><th>seq</th></tr></thead><tbody></tbody></table>
+        <div class="muted" id="tgt-count"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>持久化事件流（崩溃恢复依据）</h2>
+      <div id="events"></div>
+    </div>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
